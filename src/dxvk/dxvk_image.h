@@ -400,6 +400,49 @@ namespace dxvk {
      */
     HRESULT ReleaseSync(UINT64 key);
 
+    /**
+     * \brief Try to acquire the keyed mutex without waiting for the GPU
+     *
+     * Only takes ownership of the mutex. Unlike \ref AcquireSync, this
+     * does not block the calling thread until the previous owner's GPU
+     * work has finished. The caller must make the GPU wait for the sync
+     * object to reach the returned fence value before it uses the image.
+     * \param [in] key Key to acquire the mutex with
+     * \param [in] milliseconds Timeout
+     * \param [out] fenceValue Value the sync object must reach
+     * \returns DXGI_ERROR_INVALID_CALL if owned already or on error
+     * \returns WAIT_TIMEOUT on timeout
+     * \returns S_OK on success
+     */
+    HRESULT AcquireSyncNoWait(UINT64 key, DWORD milliseconds, uint64_t* fenceValue);
+
+    /**
+     * \brief Checks whether the mutex is currently acquired
+     * \returns \c true if the mutex is owned
+     */
+    bool isOwned() const {
+      return m_owned.load(std::memory_order_acquire);
+    }
+
+    /**
+     * \brief Fence value that the GPU has to signal before the mutex is released
+     * \returns Value for \ref ReleaseSyncNoSignal
+     */
+    uint64_t getReleaseFenceValue() const {
+      return m_fenceValue + 1;
+    }
+
+    /**
+     * \brief Release the keyed mutex without signaling the sync object
+     *
+     * The caller must have queued a GPU signal of the sync object to
+     * \ref getReleaseFenceValue, so that the next owner's GPU work waits for
+     * the work submitted so far, instead of blocking the CPU until it is done.
+     * \returns DXGI_ERROR_INVALID_CALL if not owned or on error
+     * \returns S_OK on success
+     */
+    HRESULT ReleaseSyncNoSignal(UINT64 key);
+
   private:
 
     Rc<vk::DeviceFn>            m_vkd;

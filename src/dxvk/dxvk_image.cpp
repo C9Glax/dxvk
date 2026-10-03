@@ -114,6 +114,50 @@ namespace dxvk {
   }
 
 
+  HRESULT DxvkKeyedMutex::AcquireSyncNoWait(UINT64 key, DWORD milliseconds, uint64_t* fenceValue) {
+    if (m_owned.load(std::memory_order_acquire))
+      return DXGI_ERROR_INVALID_CALL;
+
+    LARGE_INTEGER timeout = { };
+    D3DKMT_ACQUIREKEYEDMUTEX acquire = { };
+    acquire.hKeyedMutex = m_kmtLocal;
+    acquire.Key = key;
+    acquire.pTimeout = &timeout;
+    timeout.QuadPart = milliseconds * -10000;
+
+    NTSTATUS status = D3DKMTAcquireKeyedMutex(&acquire);
+    if (status == STATUS_TIMEOUT)
+      return WAIT_TIMEOUT;
+    if (status)
+      return DXGI_ERROR_INVALID_CALL;
+
+    m_fenceValue = acquire.FenceValue;
+    m_owned.store(true, std::memory_order_release);
+
+    *fenceValue = acquire.FenceValue;
+    return S_OK;
+  }
+
+
+  HRESULT DxvkKeyedMutex::ReleaseSyncNoSignal(UINT64 key) {
+    if (!m_owned.load(std::memory_order_acquire))
+      return DXGI_ERROR_INVALID_CALL;
+
+    D3DKMT_RELEASEKEYEDMUTEX release = { };
+    release.hKeyedMutex = m_kmtLocal;
+    release.Key = key;
+    release.FenceValue = m_fenceValue + 1;
+
+    if (D3DKMTReleaseKeyedMutex(&release)) {
+      Logger::warn("D3D11DXGIKeyedMutex::ReleaseSync: Failed to release mutex.");
+      return DXGI_ERROR_INVALID_CALL;
+    }
+
+    m_owned.store(false, std::memory_order_release);
+    return S_OK;
+  }
+
+
   DxvkImage::DxvkImage(
           DxvkDevice*           device,
     const DxvkImageCreateInfo&  createInfo,

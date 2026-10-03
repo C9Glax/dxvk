@@ -4,10 +4,25 @@
 #include "d3d11_context_imm.h"
 #include "d3d11_device.h"
 
+#include "../util/util_env.h"
 #include "../util/util_win32_compat.h"
 #include "../util/util_shared_res.h"
 
 namespace dxvk {
+
+  /**
+   * \brief Checks whether keyed mutexes should block the CPU
+   *
+   * By default, acquiring and releasing a keyed mutex synchronizes with the
+   * GPU using fences, like on native Windows, so that the calling thread never
+   * has to wait for the GPU. Setting DXVK_KEYED_MUTEX_BLOCKING=1 restores the
+   * old behaviour of waiting for the GPU on the CPU.
+   */
+  static bool UseBlockingKeyedMutex() {
+    static const bool blocking = env::getEnvVar("DXVK_KEYED_MUTEX_BLOCKING") == "1";
+    return blocking;
+  }
+
 
   D3D11DXGIKeyedMutex::D3D11DXGIKeyedMutex(
           ID3D11Resource* pResource,
@@ -85,6 +100,24 @@ namespace dxvk {
     Rc<DxvkDevice> dxvkDevice = m_device->GetDXVKDevice();
 
     auto keyedMutex = texture->GetImage()->getKeyedMutex();
+
+    if (keyedMutex && keyedMutex->getSyncObject() && !UseBlockingKeyedMutex()) {
+      uint64_t fenceValue = 0;
+      HRESULT hr = keyedMutex->AcquireSyncNoWait(Key, dwMilliseconds, &fenceValue);
+
+      if (hr != S_OK)
+        return hr;
+
+      // Make the GPU wait for the previous owner's work to finish,
+      // instead of blocking the calling thread until it is done.
+      Rc<DxvkFence> fence = keyedMutex->getSyncObject();
+
+      if (fenceValue && fence->getValue() < fenceValue)
+        m_device->GetContext()->WaitForDxvkFence(fence, fenceValue);
+
+      return S_OK;
+    }
+
     if (keyedMutex)
       return keyedMutex->AcquireSync(Key, dwMilliseconds);
 
@@ -113,6 +146,20 @@ namespace dxvk {
           UINT64                  Key) {
     D3D11CommonTexture* texture = GetCommonTexture(m_resource);
     Rc<DxvkDevice> dxvkDevice = m_device->GetDXVKDevice();
+
+    auto syncKeyedMutex = texture->GetImage()->getKeyedMutex();
+
+    if (syncKeyedMutex && syncKeyedMutex->getSyncObject() && !UseBlockingKeyedMutex()) {
+      if (!syncKeyedMutex->isOwned())
+        return DXGI_ERROR_INVALID_CALL;
+
+      // Signal the sync object from the GPU once all work submitted so far
+      // has finished, instead of blocking the calling thread until then.
+      m_device->GetContext()->SignalDxvkFence(
+        syncKeyedMutex->getSyncObject(), syncKeyedMutex->getReleaseFenceValue());
+
+      return syncKeyedMutex->ReleaseSyncNoSignal(Key);
+    }
 
     {
       D3D11ImmediateContext* context = m_device->GetContext();

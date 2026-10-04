@@ -7,8 +7,7 @@ namespace dxvk {
   DxvkKeyedMutex::DxvkKeyedMutex(
       const Rc<DxvkDevice>& device,
             uint64_t        initialValue,
-            bool            ntShared)
-  : m_vkd(device->vkd()) {
+            bool            ntShared) {
     DxvkFenceCreateInfo fenceInfo;
     fenceInfo.initialValue = 0;
     fenceInfo.sharedType = ntShared
@@ -34,8 +33,7 @@ namespace dxvk {
             Rc<DxvkFence>&& fence,
             D3DKMT_HANDLE   kmtLocal,
             D3DKMT_HANDLE   kmtGlobal)
-  : m_vkd(device->vkd()),
-    m_fence(fence),
+  : m_fence(fence),
     m_kmtLocal(kmtLocal),
     m_kmtGlobal(kmtGlobal) {
     if (!fence)
@@ -52,7 +50,7 @@ namespace dxvk {
   }
 
 
-  HRESULT DxvkKeyedMutex::AcquireSync(UINT64 key, DWORD  milliseconds) {
+  HRESULT DxvkKeyedMutex::AcquireSync(UINT64 key, DWORD milliseconds, uint64_t* fenceValue) {
     if (m_owned.load(std::memory_order_acquire))
       return DXGI_ERROR_INVALID_CALL;
 
@@ -69,19 +67,10 @@ namespace dxvk {
     if (status)
       return DXGI_ERROR_INVALID_CALL;
 
-    VkSemaphore semaphore = m_fence->handle();
-    VkSemaphoreWaitInfo info = { VK_STRUCTURE_TYPE_SEMAPHORE_WAIT_INFO };
-    info.semaphoreCount = 1;
-    info.pSemaphores = &semaphore;
-    info.pValues = &acquire.FenceValue;
-
-    if (m_vkd->vkWaitSemaphores(m_vkd->device(), &info, -1)) {
-      Logger::warn("DxvkKeyedMutex::AcquireSync: Failed to wait semaphore");
-      return DXGI_ERROR_INVALID_CALL;
-    }
-
     m_fenceValue = acquire.FenceValue;
     m_owned.store(true, std::memory_order_release);
+
+    *fenceValue = acquire.FenceValue;
     return S_OK;
   }
 
@@ -89,15 +78,6 @@ namespace dxvk {
   HRESULT DxvkKeyedMutex::ReleaseSync(UINT64 key) {
     if (!m_owned.load(std::memory_order_acquire))
       return DXGI_ERROR_INVALID_CALL;
-
-    VkSemaphoreSignalInfo info = { VK_STRUCTURE_TYPE_SEMAPHORE_SIGNAL_INFO };
-    info.semaphore = m_fence->handle();
-    info.value = m_fenceValue + 1;
-
-    if (m_vkd->vkSignalSemaphore(m_vkd->device(), &info)) {
-      Logger::warn("D3D11DXGIKeyedMutex::ReleaseSync: Failed to signal semaphore");
-      return DXGI_ERROR_INVALID_CALL;
-    }
 
     D3DKMT_RELEASEKEYEDMUTEX release = { };
     release.hKeyedMutex = m_kmtLocal;

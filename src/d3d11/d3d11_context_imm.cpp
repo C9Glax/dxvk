@@ -224,6 +224,45 @@ namespace dxvk {
   }
 
 
+  void D3D11ImmediateContext::SignalDxvkFence(
+    const Rc<DxvkFence>&              fence,
+          uint64_t                    value) {
+    D3D10DeviceLock lock = LockContext();
+
+    EmitCs([
+      cFence = fence,
+      cValue = value
+    ] (DxvkContext* ctx) {
+      ctx->signalFence(cFence, cValue);
+    });
+
+    if (unlikely(m_device->debugFlags().test(DxvkDebugFlag::Capture)))
+      m_flushReason = "Keyed mutex release";
+
+    ExecuteFlush(GpuFlushType::ExplicitFlush, nullptr, true);
+  }
+
+
+  void D3D11ImmediateContext::WaitForDxvkFence(
+    const Rc<DxvkFence>&              fence,
+          uint64_t                    value) {
+    D3D10DeviceLock lock = LockContext();
+
+    if (unlikely(m_device->debugFlags().test(DxvkDebugFlag::Capture)))
+      m_flushReason = "Keyed mutex acquire";
+
+    // Submit current command list first to avoid stalling
+    ExecuteFlush(GpuFlushType::ExplicitFlush, nullptr, true);
+
+    EmitCs([
+      cFence = fence,
+      cValue = value
+    ] (DxvkContext* ctx) {
+      ctx->waitFence(cFence, cValue);
+    });
+  }
+
+
   void STDMETHODCALLTYPE D3D11ImmediateContext::ExecuteCommandList(
           ID3D11CommandList*  pCommandList,
           BOOL                RestoreContextState) {

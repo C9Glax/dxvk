@@ -55,6 +55,31 @@ namespace dxvk {
             ID3D11Fence*                pFence,
             UINT64                      Value);
 
+    /**
+     * \brief Signals a fence from the GPU
+     *
+     * Queues a signal of the fence that is executed once all commands
+     * recorded so far have finished, and submits them. Does not block
+     * the calling thread.
+     * \param [in] fence Fence to signal
+     * \param [in] value Value to signal
+     */
+    void SignalDxvkFence(
+      const Rc<DxvkFence>&              fence,
+            uint64_t                    value);
+
+    /**
+     * \brief Wait for fence to reach signal value
+     *
+     * Commands recorded after this call do not start executing until
+     * the fence has reached the given value. Does not block the calling thread.
+     * \param [in] fence Fence to wait for
+     * \param [in] value Value to wait for
+     */
+    void WaitForDxvkFence(
+      const Rc<DxvkFence>&              fence,
+            uint64_t                    value);
+
     void STDMETHODCALLTYPE ExecuteCommandList(
             ID3D11CommandList*  pCommandList,
             BOOL                RestoreContextState);

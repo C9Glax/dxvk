@@ -85,8 +85,21 @@ namespace dxvk {
     Rc<DxvkDevice> dxvkDevice = m_device->GetDXVKDevice();
 
     auto keyedMutex = texture->GetImage()->getKeyedMutex();
-    if (keyedMutex)
-      return keyedMutex->AcquireSync(Key, dwMilliseconds);
+
+    if (keyedMutex && keyedMutex->getSyncObject()) {
+      uint64_t fenceValue = 0;
+      HRESULT hr = keyedMutex->AcquireSync(Key, dwMilliseconds, &fenceValue);
+
+      if (hr != S_OK)
+        return hr;
+
+      Rc<DxvkFence> fence = keyedMutex->getSyncObject();
+
+      if (fenceValue && fence->getValue() < fenceValue)
+        m_device->GetContext()->WaitForDxvkFence(fence, fenceValue);
+
+      return S_OK;
+    }
 
     /* try legacy Proton shared resource implementation */
 
@@ -114,6 +127,19 @@ namespace dxvk {
     D3D11CommonTexture* texture = GetCommonTexture(m_resource);
     Rc<DxvkDevice> dxvkDevice = m_device->GetDXVKDevice();
 
+    auto keyedMutex = texture->GetImage()->getKeyedMutex();
+
+    if (keyedMutex && keyedMutex->getSyncObject()) {
+      if (!keyedMutex->isOwned())
+        return DXGI_ERROR_INVALID_CALL;
+
+      // Report work finished to fence
+      m_device->GetContext()->SignalDxvkFence(
+        keyedMutex->getSyncObject(), keyedMutex->getReleaseFenceValue());
+
+      return keyedMutex->ReleaseSync(Key);
+    }
+
     {
       D3D11ImmediateContext* context = m_device->GetContext();
       D3D10Multithread& multithread = context->GetMultithread();
@@ -125,10 +151,6 @@ namespace dxvk {
       D3D10DeviceLock lock = context->LockContext();
       context->WaitForResource(*texture->GetImage(), DxvkCsThread::SynchronizeAll, D3D11_MAP_READ_WRITE, 0);
     }
-
-    auto keyedMutex = texture->GetImage()->getKeyedMutex();
-    if (keyedMutex)
-      return keyedMutex->ReleaseSync(Key);
 
     /* try legacy Proton shared resource implementation */
 

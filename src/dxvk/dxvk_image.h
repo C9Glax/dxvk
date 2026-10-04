@@ -387,22 +387,41 @@ namespace dxvk {
 
     /**
      * \brief Try to acquire the keyed mutex
-     * \returns DXGI_ERROR_INVALID_CALL if owned already or on error
+     * \param [in] key Key to acquire the mutex with
+     * \param [in] milliseconds Timeout
+     * \param [out] fenceValue Value the sync object must reach
+     * \returns DXGI_ERROR_INVALID_CALL if mutex is already owned or on error
      * \returns WAIT_TIMEOUT on timeout
      * \returns S_OK on success
      */
-    HRESULT AcquireSync(UINT64 key, DWORD milliseconds);
+    HRESULT AcquireSync(UINT64 key, DWORD milliseconds, uint64_t* fenceValue);
 
     /**
      * \brief Release the keyed mutex
-     * \returns DXGI_ERROR_INVALID_CALL if not owned or on error
+     * \param [in] key Key to release mutex with
+     * \returns DXGI_ERROR_INVALID_CALL if mutex is not owned or on error
      * \returns S_OK on success
      */
     HRESULT ReleaseSync(UINT64 key);
 
+    /**
+     * \brief Checks whether the mutex is currently acquired
+     * \returns \c true if the mutex is owned
+     */
+    bool isOwned() const {
+      return m_owned.load(std::memory_order_acquire);
+    }
+
+    /**
+     * \brief Fence value that the GPU signals after completion
+     * \returns Value for \ref ReleaseSync
+     */
+    uint64_t getReleaseFenceValue() const {
+      return m_fenceValue + 1;
+    }
+
   private:
 
-    Rc<vk::DeviceFn>            m_vkd;
     Rc<DxvkFence>               m_fence;
     D3DKMT_HANDLE               m_kmtLocal  = 0;
     D3DKMT_HANDLE               m_kmtGlobal = 0;
